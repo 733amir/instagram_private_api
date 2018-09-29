@@ -3,7 +3,7 @@ import warnings
 
 from .common import ClientExperimentalWarning, ClientDeprecationWarning
 from ..compatpatch import ClientCompatPatch
-from ..utils import raise_if_invalid_rank_token
+from ..utils import raise_if_invalid_rank_token, extract_urls
 
 
 class UsersEndpointsMixin(object):
@@ -166,3 +166,58 @@ class UsersEndpointsMixin(object):
             params['save_to_camera_roll'] = '1' if save_to_camera_roll else '0'
         params.update(self.authenticated_params)
         return self._call_api('users/set_reel_settings/', params=params)
+
+    def send_text(self, users, message):
+        if not isinstance(message, str) or \
+                not isinstance(users, (list, tuple, str)):
+            return False
+
+        if isinstance(users, str):
+            users = [users]
+
+        # TODO Check for reaching limits
+
+        user_ids = []
+        for user in users:
+            res = self.username_info(user)
+            user_ids.append(str(res['user']['pk']))
+
+        urls = extract_urls(message)
+        message_type = 'link' if urls else 'text'
+
+        return self.send_direct_item(
+            message_type, user_ids,
+            text=message,
+            urls=urls,
+        )
+
+    def send_direct_item(self, message_type, user_ids, **options):
+        if not isinstance(user_ids, (list, tuple)):
+            return False
+
+        params = {
+            'action': 'send_item',
+            'client_context': self.generate_uuid(return_hex=True),
+            'recipient_users': '[[{}]]'.format(','.join(user_ids)),
+        }
+
+        url = 'direct_v2/threads/broadcast/{}/'.format(message_type)
+        text = options.get('text', '')
+        if message_type == 'link':
+            params['link_text'] = text
+            params['link_urls'] = json.dumps(options.get('urls'))
+        elif message_type == 'text':
+            params['text'] = text
+        elif message_type == 'media_share':
+            params['text'] = text
+            params['media_type'] = options.get('media_type', 'photo')
+            params['media_id'] = options.get('media_id', '')
+        elif message_type == 'hashtag':
+            params['text'] = text
+            params['hashtag'] = options.get('hashtag', '')
+        elif message_type == 'profile':
+            params['text'] = text
+            params['profile_user_id'] = options.get('profile_user_id')
+
+        params.update(self.authenticated_params)
+        return self._call_api(url, params=params, unsigned=True)
